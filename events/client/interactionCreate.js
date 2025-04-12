@@ -13,7 +13,7 @@ module.exports = {
         console.error(error);
         await interaction.reply({
           content: `Something went wrong while executing this command...`,
-          ephemeral: true,
+          flags: 64, // Use flags for ephemeral response
         });
       }
     }
