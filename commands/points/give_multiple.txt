@@ -1,0 +1,204 @@
+const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
+const db = require("../../database/db"); // Import the database connection
+const houseDetails = require("../../utils/houseDetails"); // Import house details from utils
+
+const TARGET_CHANNEL_ID = process.env.CHANNEL_ID; // Replace with your target channel ID
+
+module.exports = {
+  data: new SlashCommandBuilder()
+    .setName("give_multiple_points")
+    .setDescription("Gives points to multiple houses.")
+    .addStringOption((option) =>
+      option
+        .setName("house1")
+        .setDescription("The first house to give points to")
+        .setRequired(true)
+        .addChoices(
+          { name: "Gryffindor", value: "Gryffindor" },
+          { name: "Hufflepuff", value: "Hufflepuff" },
+          { name: "Ravenclaw", value: "Ravenclaw" },
+          { name: "Slytherin", value: "Slytherin" }
+        )
+    )
+    .addIntegerOption((option) =>
+      option
+        .setName("points1")
+        .setDescription("The number of points to give to the first house")
+        .setRequired(true)
+    )
+    .addStringOption((option) =>
+      option
+        .setName("house2")
+        .setDescription("The second house to give points to")
+        .setRequired(false)
+        .addChoices(
+          { name: "Gryffindor", value: "Gryffindor" },
+          { name: "Hufflepuff", value: "Hufflepuff" },
+          { name: "Ravenclaw", value: "Ravenclaw" },
+          { name: "Slytherin", value: "Slytherin" }
+        )
+    )
+    .addIntegerOption((option) =>
+      option
+        .setName("points2")
+        .setDescription("The number of points to give to the second house")
+        .setRequired(false)
+    )
+    .addStringOption((option) =>
+      option
+        .setName("house3")
+        .setDescription("The third house to give points to")
+        .setRequired(false)
+        .addChoices(
+          { name: "Gryffindor", value: "Gryffindor" },
+          { name: "Hufflepuff", value: "Hufflepuff" },
+          { name: "Ravenclaw", value: "Ravenclaw" },
+          { name: "Slytherin", value: "Slytherin" }
+        )
+    )
+    .addIntegerOption((option) =>
+      option
+        .setName("points3")
+        .setDescription("The number of points to give to the third house")
+        .setRequired(false)
+    )
+    .addStringOption((option) =>
+      option
+        .setName("house4")
+        .setDescription("The fourth house to give points to")
+        .setRequired(false)
+        .addChoices(
+          { name: "Gryffindor", value: "Gryffindor" },
+          { name: "Hufflepuff", value: "Hufflepuff" },
+          { name: "Ravenclaw", value: "Ravenclaw" },
+          { name: "Slytherin", value: "Slytherin" }
+        )
+    )
+    .addIntegerOption((option) =>
+      option
+        .setName("points4")
+        .setDescription("The number of points to give to the fourth house")
+        .setRequired(false)
+    )
+    .addStringOption((option) =>
+      option
+        .setName("reason")
+        .setDescription("The reason for awarding points")
+        .setRequired(false)
+    ),
+
+  async execute(interaction) {
+    const awardedHouses = [
+      {
+        house: interaction.options.getString("house1"),
+        points: interaction.options.getInteger("points1"),
+      },
+      {
+        house: interaction.options.getString("house2"),
+        points: interaction.options.getInteger("points2"),
+      },
+      {
+        house: interaction.options.getString("house3"),
+        points: interaction.options.getInteger("points3"),
+      },
+      {
+        house: interaction.options.getString("house4"),
+        points: interaction.options.getInteger("points4"),
+      },
+    ].filter((h) => h.house); // Filter out houses that are not specified
+
+    const awardingUser = interaction.user;
+    const reason = interaction.options.getString("reason");
+    const userRoles = interaction.member.roles.cache.map((role) => role.id);
+
+    // Permissions check for both 'givePoints' and 'doAllOfTheAbove'
+    const requiredPermissions = ["givePoints", "doAllOfTheAbove"];
+
+    try {
+      // Fetch roles with either 'givePoints' or 'doAllOfTheAbove' permission
+      const res = await db.query(
+        "SELECT role_id FROM permissions WHERE permission = ANY($1::text[])",
+        [requiredPermissions]
+      );
+      const rolesWithPermission = res.rows.map((row) => row.role_id);
+
+      // Check if the user has a role with one of the required permissions
+      const hasPermission = userRoles.some((role) =>
+        rolesWithPermission.includes(role)
+      );
+
+      if (!hasPermission) {
+        return interaction.reply({
+          content: "You do not have permission to give points.",
+          ephemeral: true,
+        });
+      }
+
+      // Award points to each specified house
+      for (const { house, points } of awardedHouses) {
+        if (points) {
+          await db.query(
+            "UPDATE house_points SET points = points + $1 WHERE house_name = $2",
+            [points, house]
+          );
+        }
+      }
+
+      // Get updated points for all houses
+      const leaderboardRes = await db.query(
+        "SELECT house_name, points FROM house_points ORDER BY points DESC"
+      );
+      const leaderboard = leaderboardRes.rows;
+
+      // Create the embed for awarded points
+      const embed = new EmbedBuilder()
+        .setTitle(`Points Awarded`)
+        .setColor(0x18e1ee)
+        .setDescription(
+          `**تم منح النقاط بواسطة** <@${awardingUser.id}>\n
+            ${reason ? `**السبـب**\n ${reason}` : ""}`
+        )
+        .setTimestamp();
+
+      // Add awarded points details to the embed
+      awardedHouses.forEach(({ house, points }) => {
+        if (points) {
+          embed.addFields({
+            name: `${houseDetails[house].emoji} ${house}`,
+            value: `${points} points awarded`,
+            inline: true,
+          });
+        }
+      });
+
+      // Add the leaderboard to the embed
+      embed.addFields({ name: "Leaderboard - ترتيب نقاط المنازل", value: " " });
+      leaderboard.forEach((entry) => {
+        embed.addFields({
+          name: `${houseDetails[entry.house_name].emoji} ${entry.house_name}`,
+          value: `${entry.points} points`,
+          inline: true,
+        });
+      });
+
+      // Send the embed to the designated channel
+      const targetChannel = await interaction.client.channels.fetch(
+        TARGET_CHANNEL_ID
+      );
+      await targetChannel.send({ embeds: [embed] });
+
+      // Inform the user in the original command channel
+      await interaction.reply({
+        content: `Points have been awarded and the details have been posted in <#${TARGET_CHANNEL_ID}>.`,
+        ephemeral: true,
+      });
+    } catch (err) {
+      console.error("Error executing givePoints command:", err);
+      await interaction.reply({
+        content:
+          "An error occurred while updating points. Please try again later.",
+        ephemeral: true,
+      });
+    }
+  },
+};
